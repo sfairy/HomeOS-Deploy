@@ -35,27 +35,37 @@ class SSHSession:
         port: int,
         user: str,
         password: str,
+        key_path: str = "",
+        key_passphrase: str = "",
         timeout: float = 20.0,
     ) -> None:
         self.close()
         client = paramiko.SSHClient()
         client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
         try:
-            client.connect(
-                hostname=host,
-                port=port,
-                username=user,
-                password=password,
-                timeout=timeout,
-                allow_agent=False,
-                look_for_keys=False,
-            )
+            kwargs = {
+                "hostname": host,
+                "port": port,
+                "username": user,
+                "timeout": timeout,
+                "allow_agent": False,
+                "look_for_keys": False,
+            }
+            if key_path:
+                kwargs["key_filename"] = key_path
+                if key_passphrase:
+                    kwargs["passphrase"] = key_passphrase
+            else:
+                kwargs["password"] = password
+            client.connect(**kwargs)
+        except paramiko.PasswordRequiredException as exc:
+            raise ConnectionError("私钥需要口令：请在配置中填写私钥口令。") from exc
         except paramiko.AuthenticationException as exc:
-            raise ConnectionError("SSH 认证失败：用户名或密码不正确。") from exc
+            raise ConnectionError("远程认证失败：用户名、密码或私钥不正确。") from exc
         except (socket.timeout, TimeoutError) as exc:
             raise ConnectionError(f"连接超时：无法在限定时间内连上 {host}:{port}。") from exc
         except (socket.error, OSError, paramiko.SSHException) as exc:
-            raise ConnectionError(f"SSH 连接失败：{exc}") from exc
+            raise ConnectionError(f"远程连接失败：{exc}") from exc
 
         self._client = client
         self._cancel.clear()
@@ -89,7 +99,7 @@ class SSHSession:
         get_pty: bool = False,
     ) -> tuple[int, str]:
         if not self.connected or self._client is None:
-            raise ConnectionError("尚未建立 SSH 连接。")
+            raise ConnectionError("尚未建立远程连接。")
 
         if not self._run_lock.acquire(blocking=False):
             raise RuntimeError("已有远程命令在执行，请等待完成或取消后再试。")
@@ -107,7 +117,7 @@ class SSHSession:
         get_pty: bool,
     ) -> tuple[int, str]:
         if not self.connected or self._client is None:
-            raise ConnectionError("尚未建立 SSH 连接。")
+            raise ConnectionError("尚未建立远程连接。")
 
         self._cancel.clear()
         stdin, stdout, stderr = self._client.exec_command(

@@ -23,6 +23,18 @@ Write-Host "==> Building HomeOS-Deploy.exe..."
     --hidden-import=paramiko `
     --hidden-import=customtkinter `
     --hidden-import=win32crypt `
+    --hidden-import=win32clipboard `
+    --hidden-import=homeos_deploy.ui `
+    --hidden-import=homeos_deploy.ui.app `
+    --hidden-import=homeos_deploy.ui.steps `
+    --hidden-import=homeos_deploy.ui.sidebar `
+    --hidden-import=homeos_deploy.ui.console `
+    --hidden-import=homeos_deploy.ui.action_bar `
+    --hidden-import=homeos_deploy.ui.components `
+    --hidden-import=homeos_deploy.ui.constants `
+    --hidden-import=homeos_deploy.log_filter `
+    --hidden-import=homeos_deploy.app_controller `
+    --collect-submodules homeos_deploy `
     --collect-all customtkinter `
     --collect-all paramiko `
     "homeos_deploy\main.py"

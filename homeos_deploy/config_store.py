@@ -31,6 +31,12 @@ class AppConfig:
     ssh_password: str = ""
     ghcr_token: str = ""
     last_service: str = ""
+    use_sudo: bool = True
+    sudo_password: str = ""  # 空表示与 ssh_password 相同
+    ssh_key_path: str = ""
+    ssh_key_passphrase: str = ""
+    down_before_deploy: bool = False  # 部署前先 compose down
+    down_remove_volumes: bool = False  # down 时加 -v 删除数据卷
 
     def public_dict(self) -> dict[str, Any]:
         return {
@@ -40,6 +46,10 @@ class AppConfig:
             "workdir": self.workdir,
             "ghcr_user": self.ghcr_user,
             "last_service": self.last_service,
+            "use_sudo": self.use_sudo,
+            "ssh_key_path": self.ssh_key_path,
+            "down_before_deploy": self.down_before_deploy,
+            "down_remove_volumes": self.down_remove_volumes,
         }
 
     def is_empty(self) -> bool:
@@ -53,8 +63,18 @@ class AppConfig:
                 self.ssh_password,
                 self.ghcr_token,
                 self.last_service,
+                self.sudo_password,
+                self.ssh_key_path,
+                self.ssh_key_passphrase,
             ]
         )
+
+
+def resolve_sudo_password(cfg: AppConfig) -> str:
+    """use_sudo 时：独立 sudo 密码优先，否则回退 SSH 密码。"""
+    if not cfg.use_sudo:
+        return ""
+    return cfg.sudo_password or cfg.ssh_password
 
 
 def config_path() -> Path:
@@ -101,6 +121,19 @@ def _as_str(value: Any) -> str:
     return str(value).strip()
 
 
+def _as_bool(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    return True
+
+
+def _as_flag(value: Any, default: bool = False) -> bool:
+    """可选开关：仅认 bool，缺省用 default。"""
+    if isinstance(value, bool):
+        return value
+    return default
+
+
 def _as_port(value: Any) -> int:
     if value is None or value == "":
         return 0
@@ -121,6 +154,12 @@ def config_from_dict(data: dict[str, Any]) -> AppConfig:
         ssh_password=_read_secret(data, "ssh_password", "ssh_password_enc"),
         ghcr_token=_read_secret(data, "ghcr_token", "ghcr_token_enc"),
         last_service=_as_str(data.get("last_service", "")),
+        use_sudo=_as_bool(data.get("use_sudo", True)),
+        sudo_password=_read_secret(data, "sudo_password", "sudo_password_enc"),
+        ssh_key_path=_as_str(data.get("ssh_key_path", "")),
+        ssh_key_passphrase=_read_secret(data, "ssh_key_passphrase", "ssh_key_passphrase_enc"),
+        down_before_deploy=_as_flag(data.get("down_before_deploy"), False),
+        down_remove_volumes=_as_flag(data.get("down_remove_volumes"), False),
     )
 
 
@@ -131,7 +170,7 @@ def load_config_file(path: Path | str) -> AppConfig:
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
     except json.JSONDecodeError as exc:
-        raise ValueError(f"配置文件不是有效 JSON：{exc}") from exc
+        raise ValueError(f"配置文件格式无效：{exc}") from exc
     if not isinstance(data, dict):
         raise ValueError("配置文件根节点必须是对象。")
     return config_from_dict(data)
@@ -157,8 +196,9 @@ def save_config(cfg: AppConfig, path: Path | str | None = None) -> Path:
         **cfg.public_dict(),
         "ssh_password_enc": _protect(cfg.ssh_password),
         "ghcr_token_enc": _protect(cfg.ghcr_token),
+        "sudo_password_enc": _protect(cfg.sudo_password),
+        "ssh_key_passphrase_enc": _protect(cfg.ssh_key_passphrase),
     }
-    # public_dict 里 port 可能是 ""，本地文件统一存数字或空串
     target.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
     return target
 
@@ -178,9 +218,13 @@ def export_config(cfg: AppConfig, path: Path | str, include_secrets: bool = True
     if include_secrets:
         payload["ssh_password"] = cfg.ssh_password
         payload["ghcr_token"] = cfg.ghcr_token
+        payload["sudo_password"] = cfg.sudo_password
+        payload["ssh_key_passphrase"] = cfg.ssh_key_passphrase
     else:
         payload["ssh_password"] = ""
         payload["ghcr_token"] = ""
+        payload["sudo_password"] = ""
+        payload["ssh_key_passphrase"] = ""
     target.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
     return target
 
@@ -196,5 +240,7 @@ def import_config(path: Path | str, apply_locally: bool = True) -> AppConfig:
 def clear_secrets(cfg: AppConfig) -> AppConfig:
     cfg.ssh_password = ""
     cfg.ghcr_token = ""
+    cfg.sudo_password = ""
+    cfg.ssh_key_passphrase = ""
     save_config(cfg)
     return cfg
