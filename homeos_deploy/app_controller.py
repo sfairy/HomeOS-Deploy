@@ -32,7 +32,7 @@ class ControllerHooks:
     """UI 注入的回调（均应可在任意线程调用；UI 侧自行 after 回主线程）。"""
 
     log: Callable[[str], None]
-    progress: Callable[[float, str], None]
+    progress: Callable[..., None]  # (overall%, detail, pull%=None)
     set_status: Callable[[bool, str], None]
     on_milestones: Callable[[Milestones], None]
     schedule: Callable[[Callable[[], None]], None]  # 主线程调度，如 root.after(0, fn)
@@ -49,7 +49,7 @@ class AppController:
         self.ops = ops
         self.hooks = hooks
         self.milestones = Milestones()
-        self._conn_key: Optional[tuple[str, int, str, str, str]] = None
+        self._conn_key: Optional[tuple[str, int, str, str]] = None
         self.busy = False
 
     # —— helpers —— #
@@ -65,7 +65,7 @@ class AppController:
             missing.append("端口")
         if not cfg.user:
             missing.append("用户名")
-        if not cfg.ssh_key_path and not cfg.ssh_password:
+        if not cfg.ssh_password:
             missing.append("密码")
         return missing
 
@@ -81,8 +81,8 @@ class AppController:
     def _emit_milestones(self) -> None:
         self.hooks.on_milestones(self.milestones)
 
-    def _conn_identity(self, cfg: AppConfig) -> tuple[str, int, str, str, str]:
-        return (cfg.host, cfg.port, cfg.user, cfg.ssh_password, cfg.ssh_key_path)
+    def _conn_identity(self, cfg: AppConfig) -> tuple[str, int, str, str]:
+        return (cfg.host, cfg.port, cfg.user, cfg.ssh_password)
 
     def ensure_connected(self, cfg: AppConfig) -> None:
         missing = self.ssh_missing_fields(cfg)
@@ -106,8 +106,6 @@ class AppController:
             cfg.port,
             cfg.user,
             cfg.ssh_password,
-            cfg.ssh_key_path,
-            cfg.ssh_key_passphrase,
         )
         self._conn_key = key
         self.milestones.connected = True
@@ -213,7 +211,6 @@ class AppController:
             cfg.ghcr_user,
             cfg.ghcr_token,
             self.sudo(cfg),
-            use_sudo=cfg.use_sudo,
             on_output=self.hooks.log,
         )
         if code != 0:
@@ -226,25 +223,24 @@ class AppController:
     def deploy(self, cfg: AppConfig) -> None:
         cfg.workdir = validate_workdir(cfg.workdir)
         save_config(cfg)
-        if cfg.use_sudo and not self.sudo(cfg):
+        if not self.sudo(cfg):
             raise ValueError("远程命令需管理员权限，但密码为空。请填写登录密码。")
 
-        self.hooks.progress(0.0, "准备部署…")
+        self.hooks.progress(0.0, "准备部署…", 0.0)
         self.ensure_connected(cfg)
-        self.hooks.progress(2.0, "检查工作目录…")
+        self.hooks.progress(2.0, "检查工作目录…", 0.0)
         self.hooks.log(f"检查远程工作目录：{cfg.workdir}")
         resolved = self.ops.check_deploy_ready(
             cfg.workdir,
             self.sudo(cfg),
-            use_sudo=cfg.use_sudo,
             on_output=self.hooks.log,
         )
         self.hooks.log(f"前置检查通过：{resolved}")
-        self.hooks.progress(5.0, "前置检查通过，开始部署…")
+        self.hooks.progress(5.0, "前置检查通过，开始部署…", 0.0)
 
         if cfg.down_before_deploy:
             remove_vol = bool(cfg.down_remove_volumes)
-            self.hooks.progress(6.0, "下线旧容器…")
+            self.hooks.progress(6.0, "下线旧容器…", 0.0)
             if remove_vol:
                 self.hooks.log("→ 部署前下线旧容器，并删除数据卷")
             else:
@@ -252,32 +248,29 @@ class AppController:
             down_code = self.ops.compose_down(
                 cfg.workdir,
                 self.sudo(cfg),
-                use_sudo=cfg.use_sudo,
                 remove_volumes=remove_vol,
                 on_output=self.hooks.log,
             )
             if down_code != 0:
                 raise RuntimeError(f"部署前下线失败，退出码 {down_code}")
             self.hooks.log("旧容器已下线。")
-            self.hooks.progress(8.0, "旧容器已下线，开始拉取…")
+            self.hooks.progress(8.0, "旧容器已下线，开始拉取…", 0.0)
 
         code = self.ops.deploy(
             cfg.workdir,
             self.sudo(cfg),
-            use_sudo=cfg.use_sudo,
             on_output=self.hooks.log,
             on_progress=self.hooks.progress,
         )
         if code != 0:
             raise RuntimeError(f"部署失败，退出码 {code}")
 
-        self.hooks.progress(100.0, "部署完成")
+        self.hooks.progress(100.0, "部署完成", 100.0)
         # 部署成功后自动查看一次状态，便于确认
         self.hooks.log("正在查看容器状态…")
         ps_code = self.ops.compose_ps(
             cfg.workdir,
             self.sudo(cfg),
-            use_sudo=cfg.use_sudo,
             on_output=self.hooks.log,
         )
         if ps_code != 0:
@@ -295,7 +288,6 @@ class AppController:
         code = self.ops.compose_ps(
             cfg.workdir,
             self.sudo(cfg),
-            use_sudo=cfg.use_sudo,
             on_output=self.hooks.log,
         )
         if code != 0:
@@ -309,7 +301,6 @@ class AppController:
         code = self.ops.compose_logs(
             cfg.workdir,
             self.sudo(cfg),
-            use_sudo=cfg.use_sudo,
             service=service,
             tail=tail,
             on_output=self.hooks.log,
@@ -325,7 +316,6 @@ class AppController:
         code = self.ops.compose_restart(
             cfg.workdir,
             self.sudo(cfg),
-            use_sudo=cfg.use_sudo,
             service=service,
             on_output=self.hooks.log,
         )
@@ -341,7 +331,6 @@ class AppController:
         code = self.ops.compose_stop(
             cfg.workdir,
             self.sudo(cfg),
-            use_sudo=cfg.use_sudo,
             service=service,
             on_output=self.hooks.log,
         )
@@ -357,7 +346,6 @@ class AppController:
         code = self.ops.compose_down(
             cfg.workdir,
             self.sudo(cfg),
-            use_sudo=cfg.use_sudo,
             remove_volumes=False,
             on_output=self.hooks.log,
         )
@@ -371,7 +359,6 @@ class AppController:
         services = self.ops.compose_services(
             cfg.workdir,
             self.sudo(cfg),
-            use_sudo=cfg.use_sudo,
             on_output=self.hooks.log,
         )
         self.hooks.log(f"已加载 {len(services)} 个服务。")

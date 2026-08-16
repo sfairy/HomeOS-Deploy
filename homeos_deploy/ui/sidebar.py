@@ -306,7 +306,3 @@ class SlimSidebar(ctk.CTkFrame):
                 )
                 name_lbl.configure(text_color=T.MUTED)
                 desc_lbl.configure(text_color=T.MUTED)
-
-
-# 兼容旧名
-TopChrome = SlimSidebar

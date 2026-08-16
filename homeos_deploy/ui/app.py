@@ -22,10 +22,11 @@ from homeos_deploy.config_store import (
     save_config,
 )
 from homeos_deploy.defaults import APP_NAME
+from homeos_deploy.paths import asset_path
 from homeos_deploy.deploy_ops import DeployOps, normalize_workdir, validate_workdir
 from homeos_deploy.ssh_session import SSHSession
 from homeos_deploy.ui.action_bar import ActionBar
-from homeos_deploy.ui.components import WidgetFactory, mono_font, ui_font
+from homeos_deploy.ui.components import WidgetFactory, ui_font
 from homeos_deploy.ui.console import DeployConsole
 from homeos_deploy.ui.constants import (
     SERVICE_ALL,
@@ -50,6 +51,7 @@ class HomeOSDeployApp(ctk.CTk):
         self.geometry("1100x720")
         self.minsize(980, 640)
         self.configure(fg_color=T.BG)
+        self._apply_app_icon()
 
         self.cfg = load_config()
         self.session = SSHSession()
@@ -77,6 +79,34 @@ class HomeOSDeployApp(ctk.CTk):
             )
         self.protocol("WM_DELETE_WINDOW", self._on_close)
 
+    def _apply_app_icon(self) -> None:
+        """窗口标题栏 / 任务栏图标；打包后从解包目录读取。"""
+        self._icon_photo = None
+        ico = asset_path("app.ico")
+        png = asset_path("app.png")
+        if ico.is_file():
+            try:
+                self.iconbitmap(default=str(ico))
+                self.wm_iconbitmap(str(ico))
+            except Exception:
+                pass
+        if png.is_file():
+            try:
+                self._icon_photo = tk.PhotoImage(file=str(png))
+                self.iconphoto(True, self._icon_photo)
+            except Exception:
+                pass
+        # Windows 有时要等窗口映射后再设一次，任务栏才会换图标
+        self.after(200, self._reapply_iconbitmap)
+
+    def _reapply_iconbitmap(self) -> None:
+        ico = asset_path("app.ico")
+        if ico.is_file():
+            try:
+                self.wm_iconbitmap(str(ico))
+            except Exception:
+                pass
+
     # —— layout —— #
 
     def _build_layout(self) -> None:
@@ -91,7 +121,6 @@ class HomeOSDeployApp(ctk.CTk):
             on_export=self._export_config,
         )
         self.sidebar.grid(row=0, column=0, sticky="nsw")
-        self.chrome = self.sidebar
 
         self.main = ctk.CTkFrame(self, fg_color=T.BG, corner_radius=0)
         self.main.grid(row=0, column=1, sticky="nsew")
@@ -99,7 +128,6 @@ class HomeOSDeployApp(ctk.CTk):
         # 表单区贴合内容高度，剩余空间给控制台
         self.main.grid_rowconfigure(1, weight=0)
         self.main.grid_rowconfigure(2, weight=1, minsize=T.CONSOLE_MIN_H)
-        self._body_wrap = self.main
 
         top = ctk.CTkFrame(self.main, fg_color="transparent")
         top.grid(row=0, column=0, sticky="ew", padx=T.PAD, pady=(10, 0))
@@ -160,7 +188,6 @@ class HomeOSDeployApp(ctk.CTk):
             on_next=self._next_step,
             on_primary=self._primary_action,
             on_cancel=self._cancel_op,
-            embedded=True,
         )
         self.action_bar.grid(row=1, column=0, sticky="ew")
 
@@ -251,10 +278,7 @@ class HomeOSDeployApp(ctk.CTk):
         entry.insert(0, value)
 
     def _selected_service(self) -> str:
-        assert self.steps.service_manual and self.steps.service_menu
-        manual = self.steps.service_manual.get().strip()
-        if manual:
-            return manual
+        assert self.steps.service_menu
         value = self.steps.service_menu.get().strip()
         if not value or value == SERVICE_ALL:
             return ""
@@ -268,21 +292,13 @@ class HomeOSDeployApp(ctk.CTk):
             return 200
 
     def _sync_service_menu_from_config(self) -> None:
-        assert self.steps.service_menu and self.steps.service_manual
+        assert self.steps.service_menu
         last = self.cfg.last_service.strip()
         values = [SERVICE_ALL] + list(self._service_names)
-        if last and last not in self._service_names and last not in values:
+        if last and last not in values:
             values.append(last)
         self.steps.service_menu.configure(values=values)
-        if last and last in self._service_names:
-            self.steps.service_menu.set(last)
-            self._set_entry(self.steps.service_manual, "")
-        elif last and last not in self._service_names:
-            self.steps.service_menu.set(SERVICE_ALL)
-            self._set_entry(self.steps.service_manual, last)
-        else:
-            self.steps.service_menu.set(SERVICE_ALL)
-            self._set_entry(self.steps.service_manual, "")
+        self.steps.service_menu.set(last if last else SERVICE_ALL)
 
     def _load_fields_from_config(self) -> None:
         e = self.steps.ssh_entries
@@ -481,7 +497,7 @@ class HomeOSDeployApp(ctk.CTk):
     # —— status / log / progress —— #
 
     def _set_status(self, connected: bool, text: str) -> None:
-        self.chrome.set_status(connected, text)
+        self.sidebar.set_status(connected, text)
         # 「连接中…」不改里程碑；仅明确离线时清除
         if not connected and text in ("未连接",):
             self.controller.mark_disconnected()
@@ -489,7 +505,7 @@ class HomeOSDeployApp(ctk.CTk):
             self._update_deploy_checklist()
 
     def _on_milestones(self, milestones: Milestones) -> None:
-        self.chrome.set_milestones(milestones)
+        self.sidebar.set_milestones(milestones)
         if self._step == 2:
             self._update_deploy_checklist()
 
@@ -501,8 +517,15 @@ class HomeOSDeployApp(ctk.CTk):
         gen = self.console.log_gen
         self.after(0, lambda l=line, g=gen: self.console.append(l, gen=g))
 
-    def _ui_progress(self, percent: float, detail: str = "") -> None:
-        self.after(0, lambda p=percent, d=detail: set_progress(self.steps, p, d))
+    def _ui_progress(
+        self, percent: float, detail: str = "", pull_percent: float | None = None
+    ) -> None:
+        self.after(
+            0,
+            lambda p=percent, d=detail, pp=pull_percent: set_progress(
+                self.steps, p, d, pull_percent=pp
+            ),
+        )
 
     def _focus_console(self) -> None:
         self.console.focus_end()
@@ -511,14 +534,14 @@ class HomeOSDeployApp(ctk.CTk):
 
     def _set_busy(self, busy: bool) -> None:
         self.controller.busy = busy
-        self.chrome.set_busy(busy)
+        self.sidebar.set_busy(busy)
         self.action_bar.set_busy(busy)
         if not busy:
-            self.chrome.btn_disconnect.configure(
+            self.sidebar.btn_disconnect.configure(
                 state="normal" if self.session.connected else "disabled"
             )
         else:
-            self.chrome.btn_disconnect.configure(state="disabled")
+            self.sidebar.btn_disconnect.configure(state="disabled")
         state = "disabled" if busy else "normal"
         for btn in self._factory.action_btns:
             try:
@@ -556,7 +579,7 @@ class HomeOSDeployApp(ctk.CTk):
                     self._set_busy(False)
                     if not self.session.connected:
                         try:
-                            text = self.chrome.status_label.cget("text")
+                            text = self.sidebar.status_label.cget("text")
                         except Exception:
                             text = ""
                         if text in ("连接中…", "连接中...", "未连接"):
@@ -625,7 +648,7 @@ class HomeOSDeployApp(ctk.CTk):
                 "不会删除数据卷。\n\n确定继续？",
             ):
                 return
-        set_progress(self.steps, 0.0, "准备部署…")
+        set_progress(self.steps, 0.0, "准备部署…", pull_percent=0.0)
 
         def work() -> None:
             self.controller.deploy(cfg)
@@ -712,10 +735,6 @@ class HomeOSDeployApp(ctk.CTk):
 
             def apply() -> None:
                 self._sync_service_menu_from_config()
-                if self.cfg.last_service and self.cfg.last_service in self._service_names:
-                    assert self.steps.service_menu and self.steps.service_manual
-                    self.steps.service_menu.set(self.cfg.last_service)
-                    self._set_entry(self.steps.service_manual, "")
                 self._focus_console()
 
             self.after(0, apply)

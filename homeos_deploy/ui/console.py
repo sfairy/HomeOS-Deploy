@@ -5,7 +5,12 @@ from __future__ import annotations
 import customtkinter as ctk
 
 from homeos_deploy import theme as T
-from homeos_deploy.log_filter import should_show_log_line
+from homeos_deploy.log_filter import (
+    collapse_with_previous,
+    format_console_line,
+    is_progress_log_line,
+    should_show_log_line,
+)
 from homeos_deploy.ui.components import mono_font, ui_font
 from homeos_deploy.ui.constants import LOG_MAX_LINES
 
@@ -106,8 +111,22 @@ class DeployConsole(ctk.CTkFrame):
         if not should_show_log_line(stripped):
             return
 
-        # 统一存展示文本，复制与界面一致
-        display = stripped
+        display = format_console_line(stripped)
+        if not display:
+            return
+
+        if is_progress_log_line(display) and self._log_lines:
+            if is_progress_log_line(self._log_lines[-1]):
+                self._replace_last(display)
+                return
+
+        collapsed = collapse_with_previous(
+            self._log_lines[-1] if self._log_lines else None, display
+        )
+        if collapsed is not None:
+            self._replace_last(collapsed)
+            return
+
         self._log_lines.append(display)
         if len(self._log_lines) > LOG_MAX_LINES:
             overflow = len(self._log_lines) - LOG_MAX_LINES
@@ -121,6 +140,12 @@ class DeployConsole(ctk.CTkFrame):
             self.log_box.see("end")
         finally:
             self.log_box.configure(state="disabled")
+
+    def _replace_last(self, display: str) -> None:
+        if not self._log_lines:
+            return
+        self._log_lines[-1] = display
+        self._rewrite_box()
 
     def clear_log(self) -> None:
         self._gen += 1

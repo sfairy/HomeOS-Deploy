@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Callable, Optional
 
+from homeos_deploy.compose_view import format_compose_ps
 from homeos_deploy.defaults import GHCR_REGISTRY
 from homeos_deploy.log_filter import should_show_log_line
 from homeos_deploy.progress import (
@@ -16,7 +17,8 @@ from homeos_deploy.progress import (
 from homeos_deploy.ssh_session import SSHSession
 
 OutputCallback = Callable[[str], None]
-ProgressCallback = Callable[[float, str], None]
+# overall%, detail, pull_percent(0~100|None)
+ProgressCallback = Callable[[float, str, float | None], None]
 
 
 def posix_quote(value: str) -> str:
@@ -60,7 +62,7 @@ def _workdir_assign(workdir: str) -> str:
     return f"WD={posix_quote(path)}"
 
 
-def _sudo_wrap(sudo_password: str, inner_command: str) -> str:
+def _wrap_sudo(sudo_password: str, inner_command: str) -> str:
     """
     用 sudo -S 执行 inner_command。
     使用 bash -c（非 login shell），避免 -l 改变初始目录干扰 cd。
@@ -70,20 +72,61 @@ def _sudo_wrap(sudo_password: str, inner_command: str) -> str:
     return f"printf '%s\\n' {pwd} | sudo -S -p '' bash -c {wrapped}"
 
 
-def _wrap_sudo(sudo_password: str, inner_command: str, use_sudo: bool = True) -> str:
-    """按 use_sudo 开关决定是否用 sudo -S 包装命令。"""
-    if not use_sudo:
-        return inner_command
-    return _sudo_wrap(sudo_password, inner_command)
+def _looks_like_workdir(line: str) -> bool:
+    """机器输出里挑出真正的工作目录路径（排除 sudo / chdir 噪音）。"""
+    text = (line or "").strip()
+    if not text or any(ch.isspace() for ch in text):
+        return False
+    return text.startswith("/") or text.startswith("~/") or text == "~"
 
 
-def _compose_script(workdir: str, compose_args: str) -> str:
+_DUMP_UP_FAILURE_SH = r"""
+echo "=== 容器状态 ==="
+docker compose --project-directory "$WD" ps -a
+echo "=== 异常容器 ==="
+failed_ids=""
+for id in $(docker compose --project-directory "$WD" ps -aq 2>/dev/null); do
+  [ -z "$id" ] && continue
+  name=$(docker inspect -f '{{.Name}}' "$id" 2>/dev/null | sed "s|^/||")
+  st=$(docker inspect -f '{{.State.Status}}' "$id")
+  code=$(docker inspect -f '{{.State.ExitCode}}' "$id")
+  health=$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}n/a{{end}}' "$id")
+  echo "NAME=$name STATUS=$st EXIT=$code HEALTH=$health"
+  interesting=0
+  [ "$health" = "unhealthy" ] && interesting=1
+  [ "$st" = "restarting" ] && interesting=1
+  [ "$st" = "dead" ] && interesting=1
+  [ "$st" = "exited" ] && [ "$code" != "0" ] && interesting=1
+  if [ "$interesting" = "1" ]; then
+    failed_ids="$failed_ids $id"
+  fi
+done
+if [ -z "$failed_ids" ]; then
+  echo "=== 最近日志（未定位到异常容器） ==="
+  docker compose --project-directory "$WD" logs --tail=40
+else
+  for id in $failed_ids; do
+    svc=$(docker inspect -f '{{index .Config.Labels "com.docker.compose.service"}}' "$id")
+    name=$(docker inspect -f '{{.Name}}' "$id" | sed "s|^/||")
+    echo "=== 日志: ${svc:-$name} ==="
+    docker logs --tail=80 "$id" 2>&1
+  done
+fi
+"""
+
+
+def _compose_script(
+    workdir: str,
+    compose_args: str,
+    extra_env: str = "",
+) -> str:
     """在 WD 下执行 docker compose（--project-directory，不依赖 cd）。"""
     assign = _workdir_assign(workdir)
+    env = f"export {extra_env}; " if extra_env else ""
     return (
         f"{assign}; "
         f'if [ ! -d "$WD" ]; then echo "WORKDIR_MISSING:$WD" >&2; exit 2; fi; '
-        f'docker compose --project-directory "$WD" {compose_args}'
+        f'{env}docker compose --project-directory "$WD" {compose_args}'
     )
 
 
@@ -96,7 +139,6 @@ class DeployOps:
         ghcr_user: str,
         ghcr_token: str,
         sudo_password: str,
-        use_sudo: bool = True,
         on_output: Optional[OutputCallback] = None,
     ) -> int:
         user_q = posix_quote(ghcr_user)
@@ -105,7 +147,7 @@ class DeployOps:
             f"printf %s {token_q} | docker login {GHCR_REGISTRY} "
             f"-u {user_q} --password-stdin"
         )
-        cmd = _wrap_sudo(sudo_password, inner, use_sudo)
+        cmd = _wrap_sudo(sudo_password, inner)
         code, _ = self.session.run(cmd, on_output=on_output, get_pty=False)
         return code
 
@@ -113,42 +155,82 @@ class DeployOps:
         self,
         workdir: str,
         sudo_password: str,
-        use_sudo: bool = True,
         on_output: Optional[OutputCallback] = None,
     ) -> int:
         cmd = _wrap_sudo(
             sudo_password,
-            _compose_script(workdir, "pull"),
-            use_sudo,
+            _compose_script(
+                workdir,
+                "pull",
+                extra_env="COMPOSE_PROGRESS=plain",
+            ),
         )
-        code, _ = self.session.run(cmd, on_output=on_output, get_pty=False)
+        # COMPOSE_PROGRESS=plain：禁止 Compose v2 在 PTY 下用多行 TUI 刷屏。
+        # get_pty=True：docker 层进度仍用 \r 刷新，进度条才能解析。
+        # 旧 Compose 可能忽略该环境变量；控制台侧会再滤掉 TUI 帧。
+        code, _ = self.session.run(cmd, on_output=on_output, get_pty=True)
         return code
 
     def compose_up(
         self,
         workdir: str,
         sudo_password: str,
-        use_sudo: bool = True,
         on_output: Optional[OutputCallback] = None,
     ) -> int:
         cmd = _wrap_sudo(
             sudo_password,
             _compose_script(workdir, "up -d"),
-            use_sudo,
         )
         code, _ = self.session.run(cmd, on_output=on_output, get_pty=False)
         return code
+
+    def dump_up_failure(
+        self,
+        workdir: str,
+        sudo_password: str,
+        on_output: Optional[OutputCallback] = None,
+    ) -> None:
+        """启动失败后只收集异常容器的状态与日志。"""
+        assign = _workdir_assign(workdir)
+        inner = f"{assign}; {_DUMP_UP_FAILURE_SH.strip()}"
+        cmd = _wrap_sudo(sudo_password, inner)
+        self.session.run(cmd, on_output=on_output, get_pty=False)
 
     def compose_ps(
         self,
         workdir: str,
         sudo_password: str,
-        use_sudo: bool = True,
         on_output: Optional[OutputCallback] = None,
     ) -> int:
-        cmd = _wrap_sudo(sudo_password, _compose_script(workdir, "ps"), use_sudo)
-        code, _ = self.session.run(cmd, on_output=on_output, get_pty=False)
-        return code
+        attempts = (
+            "ps --format json",
+            'ps --format "{{.Service}}\\t{{.Status}}\\t{{.Ports}}"',
+            "ps",
+        )
+        last_code = 1
+        last_out = ""
+        for args in attempts:
+            cmd = _wrap_sudo(
+                sudo_password, _compose_script(workdir, args)
+            )
+            last_code, last_out = self.session.run(
+                cmd, on_output=None, get_pty=False
+            )
+            if last_code != 0:
+                continue
+            lines = format_compose_ps(last_out)
+            if lines:
+                if on_output is not None:
+                    for ln in lines:
+                        on_output(ln)
+                return 0
+            if args == "ps":
+                break
+        if on_output is not None:
+            for ln in (last_out or "").splitlines():
+                if should_show_log_line(ln):
+                    on_output(ln)
+        return last_code
 
     def compose_logs(
         self,
@@ -156,14 +238,12 @@ class DeployOps:
         sudo_password: str,
         service: str = "",
         tail: int = 200,
-        use_sudo: bool = True,
         on_output: Optional[OutputCallback] = None,
     ) -> int:
         svc = f" {posix_quote(service)}" if service.strip() else ""
         cmd = _wrap_sudo(
             sudo_password,
             _compose_script(workdir, f"logs --tail={int(tail)}{svc}"),
-            use_sudo,
         )
         code, _ = self.session.run(cmd, on_output=on_output, get_pty=False)
         return code
@@ -173,14 +253,12 @@ class DeployOps:
         workdir: str,
         sudo_password: str,
         service: str = "",
-        use_sudo: bool = True,
         on_output: Optional[OutputCallback] = None,
     ) -> int:
         svc = f" {posix_quote(service)}" if service.strip() else ""
         cmd = _wrap_sudo(
             sudo_password,
             _compose_script(workdir, f"restart{svc}"),
-            use_sudo,
         )
         code, _ = self.session.run(cmd, on_output=on_output, get_pty=False)
         return code
@@ -190,14 +268,12 @@ class DeployOps:
         workdir: str,
         sudo_password: str,
         service: str = "",
-        use_sudo: bool = True,
         on_output: Optional[OutputCallback] = None,
     ) -> int:
         svc = f" {posix_quote(service)}" if service.strip() else ""
         cmd = _wrap_sudo(
             sudo_password,
             _compose_script(workdir, f"stop{svc}"),
-            use_sudo,
         )
         code, _ = self.session.run(cmd, on_output=on_output, get_pty=False)
         return code
@@ -206,12 +282,11 @@ class DeployOps:
         self,
         workdir: str,
         sudo_password: str,
-        use_sudo: bool = True,
         remove_volumes: bool = False,
         on_output: Optional[OutputCallback] = None,
     ) -> int:
         args = "down -v" if remove_volumes else "down"
-        cmd = _wrap_sudo(sudo_password, _compose_script(workdir, args), use_sudo)
+        cmd = _wrap_sudo(sudo_password, _compose_script(workdir, args))
         code, _ = self.session.run(cmd, on_output=on_output, get_pty=False)
         return code
 
@@ -219,13 +294,11 @@ class DeployOps:
         self,
         workdir: str,
         sudo_password: str,
-        use_sudo: bool = True,
         on_output: Optional[OutputCallback] = None,
     ) -> list[str]:
         cmd = _wrap_sudo(
             sudo_password,
             _compose_script(workdir, "config --services"),
-            use_sudo,
         )
         code, out = self.session.run(cmd, on_output=on_output, get_pty=False)
         if code != 0:
@@ -248,7 +321,6 @@ class DeployOps:
         self,
         workdir: str,
         sudo_password: str,
-        use_sudo: bool = True,
         on_output: Optional[OutputCallback] = None,
     ) -> str:
         """
@@ -265,19 +337,22 @@ class DeployOps:
             f'then echo COMPOSE_OK; echo "$WD"; exit 0; '
             f"else echo COMPOSE_MISSING; echo \"$WD\"; exit 3; fi"
         )
-        cmd = _wrap_sudo(sudo_password, inner, use_sudo)
+        cmd = _wrap_sudo(sudo_password, inner)
         # 机器标记不刷控制台；由调用方写友好日志
         code, out = self.session.run(cmd, on_output=None, get_pty=False)
         text = (out or "").strip()
         lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
         resolved = ""
         for ln in reversed(lines):
+            if not should_show_log_line(ln):
+                continue
             if ln in ("COMPOSE_OK", "COMPOSE_MISSING", "WORKDIR_MISSING"):
                 continue
             if ln.startswith("WORKDIR_MISSING"):
                 continue
-            resolved = ln
-            break
+            if _looks_like_workdir(ln):
+                resolved = ln
+                break
 
         if code == 2 or "WORKDIR_MISSING" in text:
             shown = resolved or workdir
@@ -301,7 +376,6 @@ class DeployOps:
         self,
         workdir: str,
         sudo_password: str,
-        use_sudo: bool = True,
         on_output: Optional[OutputCallback] = None,
         on_progress: Optional[ProgressCallback] = None,
     ) -> int:
@@ -312,9 +386,11 @@ class DeployOps:
             if on_output is not None and should_show_log_line(line):
                 on_output(line)
 
-        def _report(pct: float, detail: str = "") -> None:
+        def _report(
+            pct: float, detail: str = "", *, pull: float | None = None
+        ) -> None:
             if on_progress is not None:
-                on_progress(pct, detail)
+                on_progress(pct, detail, pull)
             if on_output is not None and detail:
                 on_output(f"→ {detail}")
 
@@ -327,37 +403,53 @@ class DeployOps:
                 _emit(line)
                 if pct is None:
                     return
-                # UI：有可见变化再刷新，减少 after 堆积
-                if abs(pct - last_ui[0]) >= 0.3 or pct >= 99.5:
+                pull_pct = (
+                    progress.last_pull_percent if progress.phase == "pull" else None
+                )
+                if abs(pct - last_ui[0]) >= 0.5:
                     last_ui[0] = pct
                     if on_progress is not None:
-                        on_progress(pct, phase_detail)
-                if abs(pct - last_logged[0]) >= 5.0 or pct >= 99.5:
-                    last_logged[0] = pct
-                    if on_output is not None:
-                        on_output(progress.format_log(pct, phase_detail))
+                        on_progress(pct, phase_detail, pull_pct)
+                # 拉取：控制台只留一条进度，原地刷新。启动阶段进度只走顶栏，避免和容器事件交织。
+                if progress.phase != "pull" or on_output is None:
+                    return
+                metric = pull_pct if pull_pct is not None else pct
+                if abs(metric - last_logged[0]) < 1.0 and pct < 99.0:
+                    return
+                last_logged[0] = metric
+                on_output(progress.format_log(pct, phase_detail))
 
             return handler
 
         pct = progress.set_phase("pull", PHASE_PULL_BASE, PHASE_PULL_SPAN)
-        _report(pct, "开始拉取镜像")
+        _report(pct, "开始拉取镜像", pull=0.0)
         code = self.compose_pull(
-            workdir, sudo_password, use_sudo=use_sudo, on_output=_on_line("拉取镜像")
+            workdir, sudo_password, on_output=_on_line("拉取镜像")
         )
         if code != 0:
-            _report(progress.last_percent, "拉取失败")
+            _report(progress.last_percent, "拉取失败", pull=progress.last_pull_percent)
             return code
         pct = progress.complete_phase()
-        _report(pct, "镜像拉取完成")
+        _report(pct, "镜像拉取完成", pull=100.0)
 
         pct = progress.set_phase("up", PHASE_UP_BASE, PHASE_UP_SPAN)
-        _report(pct, "开始启动容器")
+        _report(pct, "开始启动容器", pull=100.0)
         code = self.compose_up(
-            workdir, sudo_password, use_sudo=use_sudo, on_output=_on_line("启动容器")
+            workdir, sudo_password, on_output=_on_line("启动容器")
         )
         if code != 0:
-            _report(progress.last_percent, "启动失败")
+            _report(progress.last_percent, "启动失败", pull=100.0)
+            if on_output is not None:
+                on_output("—— 启动失败诊断 ——")
+            try:
+                self.dump_up_failure(
+                    workdir,
+                    sudo_password,
+                    on_output=_emit,
+                )
+            except Exception as exc:
+                _emit(f"收集诊断信息失败：{exc}")
             return code
         progress.complete_phase()
-        _report(100.0, "部署完成")
+        _report(100.0, "部署完成", pull=100.0)
         return code

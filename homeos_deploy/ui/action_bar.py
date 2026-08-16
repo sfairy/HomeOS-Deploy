@@ -7,7 +7,7 @@ from typing import Callable
 import customtkinter as ctk
 
 from homeos_deploy import theme as T
-from homeos_deploy.ui.components import mono_font, ui_font
+from homeos_deploy.ui.components import ui_font
 from homeos_deploy.ui.constants import STEP_PRIMARY, STEPS
 
 
@@ -20,7 +20,6 @@ class ActionBar(ctk.CTkFrame):
         on_next: Callable[[], None],
         on_primary: Callable[[], None],
         on_cancel: Callable[[], None],
-        embedded: bool = True,
         **kwargs,
     ) -> None:
         super().__init__(

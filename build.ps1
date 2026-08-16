@@ -12,6 +12,13 @@ Write-Host "==> Installing dependencies..."
 & .\.venv\Scripts\python.exe -m pip install -r requirements.txt
 & .\.venv\Scripts\python.exe -m pip install pyinstaller
 
+Write-Host "==> Preparing app icon..."
+& .\.venv\Scripts\python.exe scripts\make_icon.py
+$icon = Join-Path $PSScriptRoot "homeos_deploy\assets\app.ico"
+if (-not (Test-Path $icon)) {
+    throw "App icon missing: $icon"
+}
+
 Write-Host "==> Building HomeOS-Deploy.exe..."
 & .\.venv\Scripts\python.exe -m PyInstaller `
     --noconfirm `
@@ -19,7 +26,10 @@ Write-Host "==> Building HomeOS-Deploy.exe..."
     --windowed `
     --onefile `
     --name "HomeOS-Deploy" `
+    --icon $icon `
     --paths "." `
+    --add-data "homeos_deploy\assets\app.ico;homeos_deploy\assets" `
+    --add-data "homeos_deploy\assets\app.png;homeos_deploy\assets" `
     --hidden-import=paramiko `
     --hidden-import=customtkinter `
     --hidden-import=win32crypt `

@@ -8,6 +8,8 @@ from typing import Callable, Optional
 
 import paramiko
 
+from homeos_deploy.log_filter import strip_ansi
+
 OutputCallback = Callable[[str], None]
 
 
@@ -35,33 +37,23 @@ class SSHSession:
         port: int,
         user: str,
         password: str,
-        key_path: str = "",
-        key_passphrase: str = "",
         timeout: float = 20.0,
     ) -> None:
         self.close()
         client = paramiko.SSHClient()
         client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
         try:
-            kwargs = {
-                "hostname": host,
-                "port": port,
-                "username": user,
-                "timeout": timeout,
-                "allow_agent": False,
-                "look_for_keys": False,
-            }
-            if key_path:
-                kwargs["key_filename"] = key_path
-                if key_passphrase:
-                    kwargs["passphrase"] = key_passphrase
-            else:
-                kwargs["password"] = password
-            client.connect(**kwargs)
-        except paramiko.PasswordRequiredException as exc:
-            raise ConnectionError("私钥需要口令：请在配置中填写私钥口令。") from exc
+            client.connect(
+                hostname=host,
+                port=port,
+                username=user,
+                password=password,
+                timeout=timeout,
+                allow_agent=False,
+                look_for_keys=False,
+            )
         except paramiko.AuthenticationException as exc:
-            raise ConnectionError("远程认证失败：用户名、密码或私钥不正确。") from exc
+            raise ConnectionError("远程认证失败：用户名或密码不正确。") from exc
         except (socket.timeout, TimeoutError) as exc:
             raise ConnectionError(f"连接超时：无法在限定时间内连上 {host}:{port}。") from exc
         except (socket.error, OSError, paramiko.SSHException) as exc:
@@ -134,10 +126,13 @@ class SSHSession:
         def _emit_piece(piece: str) -> None:
             if not piece:
                 return
+            piece = strip_ansi(piece).rstrip("\r\n")
+            if not piece.strip():
+                return
             # docker 进度常用 \r 刷新同一行
-            chunks.append(piece if piece.endswith("\n") else piece + "\n")
+            chunks.append(piece + "\n")
             if on_output is not None:
-                on_output(piece.rstrip("\r\n"))
+                on_output(piece)
 
         def _read_stream(stream) -> None:
             buf = ""

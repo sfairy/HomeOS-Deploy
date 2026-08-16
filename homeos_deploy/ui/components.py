@@ -24,24 +24,6 @@ class WidgetFactory:
     def __init__(self) -> None:
         self.action_btns: list[ctk.CTkButton] = []
 
-    def primary(
-        self, parent, text: str, command: Callable, width: int = 140
-    ) -> ctk.CTkButton:
-        btn = ctk.CTkButton(
-            parent,
-            text=text,
-            command=command,
-            width=width,
-            height=34,
-            corner_radius=T.RADIUS_SM,
-            fg_color=T.ACCENT,
-            hover_color=T.ACCENT_HOVER,
-            text_color="#041018",
-            font=ui_font(13, "bold"),
-        )
-        self.action_btns.append(btn)
-        return btn
-
     def secondary(
         self, parent, text: str, command: Callable, width: int = 100
     ) -> ctk.CTkButton:
@@ -81,28 +63,6 @@ class WidgetFactory:
         )
         self.action_btns.append(btn)
         return btn
-
-    def ghost(
-        self,
-        parent,
-        text: str,
-        command: Callable,
-        width: int = 64,
-        *,
-        on_dark: bool = True,
-    ) -> ctk.CTkButton:
-        return ctk.CTkButton(
-            parent,
-            text=text,
-            command=command,
-            width=width,
-            height=28,
-            corner_radius=6,
-            fg_color="transparent",
-            hover_color=T.SURFACE_HOVER,
-            text_color=T.MUTED,
-            font=ui_font(11),
-        )
 
 
 def field_block(

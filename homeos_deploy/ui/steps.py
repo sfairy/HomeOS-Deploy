@@ -14,7 +14,6 @@ from homeos_deploy.ui.components import (
     WidgetFactory,
     field_block,
     hint_label,
-    mono_font,
     option_menu,
     section_card,
     tip_bar,
@@ -41,9 +40,7 @@ class StepWidgets:
     deploy_down_before: Optional[ctk.CTkCheckBox] = None
     deploy_down_volumes: Optional[ctk.CTkCheckBox] = None
     service_menu: Optional[ctk.CTkOptionMenu] = None
-    service_manual: Optional[ctk.CTkEntry] = None
     tail_menu: Optional[ctk.CTkOptionMenu] = None
-    ops_btn_frame: Optional[ctk.CTkFrame] = None
 
 
 def build_all_steps(
@@ -175,22 +172,24 @@ def _build_deploy(parent: ctk.CTkFrame, w: StepWidgets) -> ctk.CTkFrame:
 
     prog_card, prog_body = section_card(body, "部署进度")
     prog_card.grid(row=1, column=1, sticky="nsew", padx=(8, 0))
+
     row = ctk.CTkFrame(prog_body, fg_color="transparent")
     row.pack(fill="x")
     row.grid_columnconfigure(0, weight=1)
     w.deploy_progress = ctk.CTkProgressBar(
         row,
-        height=14,
-        corner_radius=7,
+        height=12,
+        corner_radius=6,
         progress_color=T.ACCENT,
         fg_color=T.PROGRESS_TRACK,
     )
     w.deploy_progress.grid(row=0, column=0, sticky="ew", padx=(0, 10))
     w.deploy_progress.set(0)
     w.deploy_progress_label = ctk.CTkLabel(
-        row, text="0.0%", width=56, text_color=T.ACCENT, font=ui_font(12)
+        row, text="0%", width=48, text_color=T.ACCENT, font=ui_font(12)
     )
     w.deploy_progress_label.grid(row=0, column=1)
+
     w.deploy_progress_detail = ctk.CTkLabel(
         prog_body,
         text="等待开始…",
@@ -284,13 +283,8 @@ def _build_ops(
     w.tail_menu.pack(anchor="w", pady=(4, 0))
     w.tail_menu.set("200")
 
-    w.service_manual = field_block(
-        body, 2, "手动服务名（可选，优先于下拉）", column=0, columnspan=2
-    )
-
     actions = ctk.CTkFrame(body, fg_color="transparent")
-    actions.grid(row=3, column=0, columnspan=2, sticky="w", pady=(10, 0))
-    w.ops_btn_frame = actions
+    actions.grid(row=2, column=0, columnspan=2, sticky="w", pady=(10, 0))
     factory.secondary(actions, "查看状态", on_ps, 88).pack(side="left", padx=(0, 6))
     factory.secondary(actions, "查看日志", on_logs, 88).pack(side="left", padx=(0, 6))
     factory.secondary(actions, "重启", on_restart, 72).pack(side="left", padx=(0, 6))
@@ -313,17 +307,26 @@ def update_deploy_checklist(w: StepWidgets, connected: bool, workdir_raw: str) -
     )
 
 
-def set_progress(w: StepWidgets, percent: float, detail: str = "") -> None:
+def set_progress(
+    w: StepWidgets,
+    percent: float,
+    detail: str = "",
+    pull_percent: float | None = None,
+) -> None:
     if not w.deploy_progress:
         return
     pct = max(0.0, min(100.0, float(percent)))
     w.deploy_progress.set(pct / 100.0)
     if w.deploy_progress_label:
-        w.deploy_progress_label.configure(text=f"{pct:5.1f}%")
+        w.deploy_progress_label.configure(text=f"{pct:.0f}%")
+
     if w.deploy_progress_detail:
         text = detail.strip() if detail else "…"
-        if text and not text.endswith("%") and pct > 0:
-            # 详情里带上当前百分比，避免只显示「拉取镜像」看不出变化
-            if text in ("拉取镜像", "启动容器", "准备部署…", "检查工作目录…"):
-                text = f"{text}  ·  {pct:.0f}%"
+        if text == "拉取镜像":
+            shown = pull_percent if pull_percent is not None else pct
+            text = f"正在拉取镜像  ·  {shown:.0f}%"
+        elif text == "启动容器":
+            text = f"正在启动容器  ·  {pct:.0f}%"
+        elif text in ("准备部署…", "检查工作目录…") and pct > 0:
+            text = f"{text}  ·  {pct:.0f}%"
         w.deploy_progress_detail.configure(text=text)
