@@ -138,7 +138,7 @@ class SSHSession:
             buf = ""
             try:
                 while not self._cancel.is_set():
-                    data = stream.read(256)
+                    data = stream.read(4096)
                     if not data:
                         break
                     if isinstance(data, bytes):

@@ -145,7 +145,13 @@ class DeployConsole(ctk.CTkFrame):
         if not self._log_lines:
             return
         self._log_lines[-1] = display
-        self._rewrite_box()
+        try:
+            self.log_box.configure(state="normal")
+            self.log_box.delete("end-2l", "end-1c")
+            self.log_box.insert("end", display + "\n")
+            self.log_box.see("end")
+        finally:
+            self.log_box.configure(state="disabled")
 
     def clear_log(self) -> None:
         self._gen += 1

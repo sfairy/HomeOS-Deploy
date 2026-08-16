@@ -8,16 +8,28 @@ import customtkinter as ctk
 
 from homeos_deploy import theme as T
 
+_FONT_CACHE: dict[tuple[str, int, str], ctk.CTkFont] = {}
+
 
 def ui_font(size: int = 13, weight: str = "normal") -> ctk.CTkFont:
-    return ctk.CTkFont(family=T.FONT_UI, size=size, weight=weight)
+    key = (T.FONT_UI, size, weight)
+    font = _FONT_CACHE.get(key)
+    if font is None:
+        font = ctk.CTkFont(family=T.FONT_UI, size=size, weight=weight)
+        _FONT_CACHE[key] = font
+    return font
 
 
 def mono_font(size: int = 12) -> ctk.CTkFont:
-    try:
-        return ctk.CTkFont(family=T.FONT_MONO, size=size)
-    except Exception:
-        return ctk.CTkFont(family="Consolas", size=size)
+    key = (T.FONT_MONO, size, "normal")
+    font = _FONT_CACHE.get(key)
+    if font is None:
+        try:
+            font = ctk.CTkFont(family=T.FONT_MONO, size=size)
+        except Exception:
+            font = ctk.CTkFont(family="Consolas", size=size)
+        _FONT_CACHE[key] = font
+    return font
 
 
 class WidgetFactory:

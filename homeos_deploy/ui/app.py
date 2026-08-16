@@ -68,6 +68,12 @@ class HomeOSDeployApp(ctk.CTk):
             schedule=lambda fn: self.after(0, fn),
         )
         self.controller = AppController(self.session, self.ops, hooks)
+        self._log_lock = threading.Lock()
+        self._log_queue: list[tuple[str, int]] = []
+        self._log_flush_scheduled = False
+        self._progress_lock = threading.Lock()
+        self._pending_progress: tuple[float, str, float | None] | None = None
+        self._progress_scheduled = False
 
         self._build_layout()
         self._load_fields_from_config()
@@ -125,7 +131,7 @@ class HomeOSDeployApp(ctk.CTk):
         self.main = ctk.CTkFrame(self, fg_color=T.BG, corner_radius=0)
         self.main.grid(row=0, column=1, sticky="nsew")
         self.main.grid_columnconfigure(0, weight=1)
-        # 表单区贴合内容高度，剩余空间给控制台
+        # 表单区贴合当前步内容，剩余空间给控制台
         self.main.grid_rowconfigure(1, weight=0)
         self.main.grid_rowconfigure(2, weight=1, minsize=T.CONSOLE_MIN_H)
 
@@ -203,18 +209,15 @@ class HomeOSDeployApp(ctk.CTk):
         self.step_title.configure(text=title)
         self.step_subtitle.configure(text=subtitle)
 
+        # 只显示当前步，卡片高度跟内容走，避免短页留下大块空白。
         for i, frame in self.steps.frames.items():
             if i == idx:
                 frame.grid(row=0, column=0, sticky="ew")
             else:
-                frame.grid_forget()
+                frame.grid_remove()
 
         self.action_bar.set_step(idx)
         self.sidebar.set_current_step(idx)
-
-        # 运维步：控制台略高一点（仍由控制台吃掉剩余高度）
-        console_min = T.CONSOLE_OPS_MIN_H if idx == 3 else T.CONSOLE_MIN_H
-        self.main.grid_rowconfigure(2, weight=1, minsize=console_min)
 
         if idx == 2:
             self._update_deploy_checklist()
@@ -515,17 +518,40 @@ class HomeOSDeployApp(ctk.CTk):
 
     def _ui_log(self, line: str) -> None:
         gen = self.console.log_gen
-        self.after(0, lambda l=line, g=gen: self.console.append(l, gen=g))
+        with self._log_lock:
+            self._log_queue.append((line, gen))
+            if self._log_flush_scheduled:
+                return
+            self._log_flush_scheduled = True
+        self.after(16, self._flush_logs)
+
+    def _flush_logs(self) -> None:
+        with self._log_lock:
+            batch = self._log_queue
+            self._log_queue = []
+            self._log_flush_scheduled = False
+        for line, gen in batch:
+            self.console.append(line, gen=gen)
 
     def _ui_progress(
         self, percent: float, detail: str = "", pull_percent: float | None = None
     ) -> None:
-        self.after(
-            0,
-            lambda p=percent, d=detail, pp=pull_percent: set_progress(
-                self.steps, p, d, pull_percent=pp
-            ),
-        )
+        with self._progress_lock:
+            self._pending_progress = (percent, detail, pull_percent)
+            if self._progress_scheduled:
+                return
+            self._progress_scheduled = True
+        self.after(33, self._flush_progress)
+
+    def _flush_progress(self) -> None:
+        with self._progress_lock:
+            pending = self._pending_progress
+            self._pending_progress = None
+            self._progress_scheduled = False
+        if pending is None:
+            return
+        percent, detail, pull_percent = pending
+        set_progress(self.steps, percent, detail, pull_percent=pull_percent)
 
     def _focus_console(self) -> None:
         self.console.focus_end()

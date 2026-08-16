@@ -16,6 +16,16 @@ _NOISE_PREFIX = (
     "[sudo] password",
     "Sorry, try again",
     "password for",
+    "Configure a credential helper to remove this warning",
+)
+
+_NOISE_CONTAINS = (
+    "docs.docker.com/go/credential-store",
+)
+
+_CREDS_UNENCRYPTED = re.compile(
+    r"^WARNING!\s*Your credentials are stored unencrypted in '([^']+)'\.?$",
+    re.I,
 )
 
 # CSI / OSC 等 ANSI 控制序列。
@@ -117,10 +127,13 @@ def collapse_with_previous(previous: str | None, current: str) -> str | None:
 
 
 def format_console_line(line: str) -> str:
-    """把 Compose 容器事件收成短中文行，其余原样。"""
+    """把 Compose 容器事件与 Docker 登录提示收成短中文行，其余原样。"""
     text = clean_log_text(line)
     if not text:
         return ""
+    creds = _CREDS_UNENCRYPTED.match(text)
+    if creds:
+        return f"提示：凭据未加密，保存在 {creds.group(1)}"
     m = _CONTAINER_EVENT.match(text)
     if not m:
         return text
@@ -161,8 +174,13 @@ def should_show_log_line(line: str) -> bool:
     if text in _NOISE_EXACT:
         return False
     lower = text.lower()
+    if lower.rstrip(".") == "login succeeded":
+        return False
     for prefix in _NOISE_PREFIX:
         if text.startswith(prefix) or lower.startswith(prefix.lower()):
+            return False
+    for needle in _NOISE_CONTAINS:
+        if needle.lower() in lower:
             return False
     if text in ("Password:", "password:"):
         return False

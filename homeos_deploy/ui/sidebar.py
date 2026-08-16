@@ -6,8 +6,10 @@ from typing import Callable
 
 import customtkinter as ctk
 
+from homeos_deploy import __version__
 from homeos_deploy import theme as T
 from homeos_deploy.app_controller import Milestones
+from homeos_deploy.defaults import COPYRIGHT_DEVELOPER, COPYRIGHT_HOLDER
 from homeos_deploy.ui.components import mono_font, ui_font
 from homeos_deploy.ui.constants import STEPS
 
@@ -42,6 +44,7 @@ class SlimSidebar(ctk.CTkFrame):
         self._name_labels: list[ctk.CTkLabel] = []
         self._desc_labels: list[ctk.CTkLabel] = []
         self._rows: list[ctk.CTkFrame] = []
+        self._row_style: list[str] = []
 
         brand = ctk.CTkFrame(self, fg_color="transparent")
         brand.grid(row=0, column=0, sticky="ew", padx=16, pady=(20, 6))
@@ -182,9 +185,10 @@ class SlimSidebar(ctk.CTkFrame):
             self._dots.append(dot)
             self._name_labels.append(name_lbl)
             self._desc_labels.append(desc_lbl)
+            self._row_style.append("")
 
         side_actions = ctk.CTkFrame(self, fg_color="transparent")
-        side_actions.grid(row=4, column=0, sticky="ew", padx=12, pady=(6, 18))
+        side_actions.grid(row=4, column=0, sticky="ew", padx=12, pady=(6, 8))
         side_actions.grid_columnconfigure(0, weight=1)
         ctk.CTkButton(
             side_actions,
@@ -212,6 +216,39 @@ class SlimSidebar(ctk.CTkFrame):
             font=ui_font(11),
             command=on_export,
         ).grid(row=1, column=0, sticky="ew")
+
+        legal = ctk.CTkFrame(self, fg_color="transparent")
+        legal.grid(row=5, column=0, sticky="ew", padx=10, pady=(4, 12))
+        wrap = max(T.SIDEBAR_WIDTH - 28, 120)
+        ctk.CTkLabel(
+            legal,
+            text=f"版权所有：{COPYRIGHT_HOLDER}",
+            anchor="center",
+            justify="center",
+            text_color=T.TEXT_DIM,
+            font=ui_font(10),
+            height=16,
+            wraplength=wrap,
+        ).pack(fill="x")
+        ctk.CTkLabel(
+            legal,
+            text=f"程序开发：{COPYRIGHT_DEVELOPER}",
+            anchor="center",
+            justify="center",
+            text_color=T.TEXT_DIM,
+            font=ui_font(10),
+            height=16,
+            wraplength=wrap,
+        ).pack(fill="x")
+        ctk.CTkLabel(
+            legal,
+            text=f"HomeOS Deploy v{__version__}",
+            anchor="center",
+            justify="center",
+            text_color=T.IDLE,
+            font=mono_font(9),
+            height=14,
+        ).pack(fill="x", pady=(1, 0))
 
         # 右侧细线分隔
         ctk.CTkFrame(self, fg_color=T.HEADER_LINE, width=1).place(
@@ -280,6 +317,16 @@ class SlimSidebar(ctk.CTkFrame):
                 done = self._milestones.deployed or self._milestones.connected
 
             if i == self._current:
+                key = "current"
+            elif done:
+                key = "done"
+            else:
+                key = "idle"
+            if self._row_style[i] == key:
+                continue
+            self._row_style[i] = key
+
+            if key == "current":
                 row.configure(fg_color=T.SURFACE)
                 dot.configure(
                     fg_color=T.ACCENT,
@@ -288,7 +335,7 @@ class SlimSidebar(ctk.CTkFrame):
                 )
                 name_lbl.configure(text_color=T.ACCENT)
                 desc_lbl.configure(text_color=T.TEXT_DIM)
-            elif done:
+            elif key == "done":
                 row.configure(fg_color="transparent")
                 dot.configure(
                     fg_color=T.SIDEBAR_DONE,

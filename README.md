@@ -43,19 +43,20 @@ pip install -r requirements.txt
 python homeos_deploy\main.py
 ```
 
-也可直接运行打包产物：`dist\HomeOS-Deploy.exe`。
+也可直接运行打包产物：`dist\HomeOS-Deploy\HomeOS-Deploy.exe`（需保留同目录文件）。
 
-## 打包 exe
+## 打包
 
 ```powershell
-.\build.ps1
+.\build.ps1              # 目录分发（启动快，默认）
+.\build.ps1 -OneFile     # 单文件 exe（每次启动解压，较慢）
 ```
 
 会从 `homeos_deploy/assets/app.png` 生成多尺寸 `app.ico`，写入 exe 与窗口图标。
 
-产物：`dist\HomeOS-Deploy.exe`
+默认产物：`dist\HomeOS-Deploy\` 整个文件夹（请整夹拷贝，不要只拷 exe）。
 
-若资源管理器仍显示旧图标，刷新或把 exe 拷到其他目录后再看（Windows 会缓存图标）。
+若资源管理器仍显示旧图标，刷新或把文件夹拷到其他目录后再看（Windows 会缓存图标）。
 
 ## 使用流程
 

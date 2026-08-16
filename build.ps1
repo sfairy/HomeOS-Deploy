@@ -1,4 +1,9 @@
-# HomeOS Deploy - 一键打包 Windows exe
+# HomeOS Deploy - 打包 Windows 应用
+# 默认 onedir（启动快）；需要单文件时：.\build.ps1 -OneFile
+param(
+    [switch]$OneFile
+)
+
 $ErrorActionPreference = "Stop"
 Set-Location $PSScriptRoot
 
@@ -19,12 +24,14 @@ if (-not (Test-Path $icon)) {
     throw "App icon missing: $icon"
 }
 
-Write-Host "==> Building HomeOS-Deploy.exe..."
+$bundle = if ($OneFile) { "--onefile" } else { "--onedir" }
+Write-Host "==> Building HomeOS-Deploy ($bundle)..."
 & .\.venv\Scripts\python.exe -m PyInstaller `
     --noconfirm `
     --clean `
     --windowed `
-    --onefile `
+    --noupx `
+    $bundle `
     --name "HomeOS-Deploy" `
     --icon $icon `
     --paths "." `
@@ -53,5 +60,15 @@ if ($LASTEXITCODE -ne 0) {
     throw "PyInstaller failed with exit code $LASTEXITCODE"
 }
 
+$oldOne = Join-Path $PSScriptRoot "dist\HomeOS-Deploy.exe"
+if (-not $OneFile -and (Test-Path $oldOne)) {
+    Remove-Item $oldOne -Force
+}
+
 Write-Host ""
-Write-Host "Done: $PSScriptRoot\dist\HomeOS-Deploy.exe"
+if ($OneFile) {
+    Write-Host "Done: $PSScriptRoot\dist\HomeOS-Deploy.exe"
+} else {
+    Write-Host "Done: $PSScriptRoot\dist\HomeOS-Deploy\HomeOS-Deploy.exe"
+    Write-Host "Copy the whole dist\HomeOS-Deploy folder (not just the exe)."
+}

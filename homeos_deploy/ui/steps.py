@@ -67,11 +67,10 @@ def build_all_steps(
 
 
 def _shell(parent: ctk.CTkFrame) -> tuple[ctk.CTkFrame, ctk.CTkFrame]:
-    shell = ctk.CTkFrame(parent, fg_color="transparent")
+    shell = ctk.CTkFrame(parent, fg_color="transparent", corner_radius=0)
     shell.grid_columnconfigure(0, weight=1)
     shell.grid_rowconfigure(0, weight=0)
     body = ctk.CTkFrame(shell, fg_color="transparent")
-    # 贴合内容高度，无滚动条
     body.grid(row=0, column=0, sticky="ew", padx=14, pady=(6, 4))
     body.grid_columnconfigure(0, weight=1)
     return shell, body
@@ -130,15 +129,18 @@ def _build_ghcr(
 
     tip_bar(
         body, "登录镜像仓库后即可拉取私有镜像。令牌需具备软件包读取权限。"
-    ).grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 12))
+    ).grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 8))
 
-    w.ghcr_user_entry = field_block(body, 1, "仓库用户名", column=0, padx=(0, 8))
+    card, card_body = section_card(body, "仓库账号")
+    card.grid(row=1, column=0, columnspan=2, sticky="ew")
+    card_body.grid_columnconfigure((0, 1), weight=1)
+    w.ghcr_user_entry = field_block(card_body, 0, "仓库用户名", column=0, padx=(0, 8))
     w.ghcr_token_entry = field_block(
-        body, 1, "访问令牌", column=1, padx=(8, 0), show="•"
+        card_body, 0, "访问令牌", column=1, padx=(8, 0), show="•"
     )
 
     footer = ctk.CTkFrame(body, fg_color="transparent")
-    footer.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(4, 0))
+    footer.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(8, 0))
     footer.grid_columnconfigure(0, weight=1)
 
     hint_label(
@@ -258,10 +260,14 @@ def _build_ops(
 
     tip_bar(
         body, "查看容器状态与日志，或对单个服务重启 / 停止。下线默认不删除数据卷。"
-    ).grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 12))
+    ).grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 8))
 
-    svc_wrap = ctk.CTkFrame(body, fg_color="transparent")
-    svc_wrap.grid(row=1, column=0, sticky="ew", padx=(0, 8), pady=(0, T.FIELD_GAP))
+    card, card_body = section_card(body, "目标服务")
+    card.grid(row=1, column=0, columnspan=2, sticky="ew")
+    card_body.grid_columnconfigure((0, 1), weight=1)
+
+    svc_wrap = ctk.CTkFrame(card_body, fg_color="transparent")
+    svc_wrap.grid(row=0, column=0, sticky="ew", padx=(0, 8))
     svc_wrap.grid_columnconfigure(0, weight=1)
     ctk.CTkLabel(
         svc_wrap, text="服务", anchor="w", text_color=T.MUTED, font=ui_font(11)
@@ -274,12 +280,12 @@ def _build_ops(
     w.service_menu.set(SERVICE_ALL)
     factory.secondary(row, "刷新", on_refresh_services, 72).grid(row=0, column=1)
 
-    tail_wrap = ctk.CTkFrame(body, fg_color="transparent")
-    tail_wrap.grid(row=1, column=1, sticky="ew", padx=(8, 0), pady=(0, T.FIELD_GAP))
+    tail_wrap = ctk.CTkFrame(card_body, fg_color="transparent")
+    tail_wrap.grid(row=0, column=1, sticky="ew", padx=(8, 0))
     ctk.CTkLabel(
         tail_wrap, text="日志行数", anchor="w", text_color=T.MUTED, font=ui_font(11)
     ).pack(anchor="w")
-    w.tail_menu = option_menu(tail_wrap, TAIL_OPTIONS, width=120)
+    w.tail_menu = option_menu(tail_wrap, TAIL_OPTIONS, width=140)
     w.tail_menu.pack(anchor="w", pady=(4, 0))
     w.tail_menu.set("200")
 
