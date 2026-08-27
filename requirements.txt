@@ -1,4 +1,4 @@
 customtkinter>=5.2.2
 paramiko>=3.4.0
-pywin32>=306
+pywin32>=306; sys_platform == "win32"
 Pillow>=10.0.0

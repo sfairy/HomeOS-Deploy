@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import json
 import os
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -67,7 +68,11 @@ def resolve_sudo_password(cfg: AppConfig) -> str:
 
 
 def config_path() -> Path:
-    base = Path(os.environ.get("APPDATA", Path.home() / "AppData" / "Roaming"))
+    if sys.platform == "darwin":
+        # macOS 惯例路径：~/Library/Application Support/
+        base = Path.home() / "Library" / "Application Support"
+    else:
+        base = Path(os.environ.get("APPDATA", Path.home() / "AppData" / "Roaming"))
     return base / CONFIG_DIR_NAME / CONFIG_FILE_NAME
 
 

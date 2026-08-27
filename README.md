@@ -47,12 +47,24 @@ python homeos_deploy\main.py
 
 ## 打包
 
+PyInstaller 不支持交叉编译：exe 须在 Windows 上打包，macOS .app 须在 macOS 上打包。
+
 ```powershell
+# Windows（产物 HomeOS-Deploy.exe）
 .\build.ps1              # 目录分发（启动快，默认）
 .\build.ps1 -OneFile     # 单文件 exe（每次启动解压，较慢）
 ```
 
-会从 `homeos_deploy/assets/app.png` 生成多尺寸 `app.ico`，写入 exe 与窗口图标。
+```bash
+# macOS（产物 HomeOS-Deploy.app，需本机 Python 3.10+ 且 Tk ≥ 8.6）
+./build.sh               # 目录分发（默认）
+./build.sh --onefile     # 单文件可执行程序
+```
+
+> 本机 Python 过旧时可用 [uv](https://docs.astral.sh/uv/) 安装新版：`uv python install 3.13`，
+> 再以 `PYTHON=~/.local/share/uv/python/cpython-3.13-macos-aarch64-none/bin/python3.13 ./build.sh` 指定。
+
+会从 `homeos_deploy/assets/app.png` 生成多尺寸 `app.ico`（Windows），macOS 上额外生成 `app.icns` 作为 Dock / .app 图标。
 
 默认产物：`dist\HomeOS-Deploy\` 整个文件夹（请整夹拷贝，不要只拷 exe）。
 

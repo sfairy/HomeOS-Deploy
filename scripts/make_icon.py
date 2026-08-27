@@ -1,7 +1,8 @@
-"""从 assets/app.png 生成 Windows 多尺寸 app.ico。"""
+"""从 assets/app.png 生成 Windows 多尺寸 app.ico；macOS 上额外生成 app.icns。"""
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 
 from PIL import Image
@@ -24,6 +25,13 @@ def main() -> None:
     ICO.parent.mkdir(parents=True, exist_ok=True)
     frames[-1].save(ICO, format="ICO", sizes=SIZES, append_images=frames[:-1])
     print(f"wrote {ICO}")
+
+    if sys.platform == "darwin":
+        # macOS .app 包 / Dock 图标（PyInstaller --icon 使用）
+        icns = PNG.with_name("app.icns")
+        big = canvas.resize((1024, 1024), Image.Resampling.LANCZOS)
+        big.save(icns, format="ICNS")
+        print(f"wrote {icns}")
 
 
 if __name__ == "__main__":
